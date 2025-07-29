@@ -22,15 +22,60 @@ hist_assumps = get_inputs_from_excel(DEFAULT_FILE)
 
 # ─── USER INPUTS PANEL ──────────────────────────────────────────────
 st.sidebar.header("🔧 Model Inputs (override)")
-starting_rev    = st.sidebar.number_input("Starting Revenue",     value=hist_assumps["starting_revenue"], step=10000, format="%d")
-revenue_growth  = st.sidebar.slider("Revenue Growth Rate",    min_value=0.0, max_value=1.0, value=hist_assumps["revenue_growth"], format="%.2f")
-cost_margin     = st.sidebar.slider("Cost of Sales Margin",   min_value=0.0, max_value=1.0, value=hist_assumps["margin"],           format="%.2f")
-depr_rate       = st.sidebar.slider("Depreciation Rate (%)",  min_value=0.0, max_value=0.5, value=0.1,                                             format="%.2f")
-capex_pct       = st.sidebar.slider("CapEx % of Revenue",     min_value=0.0, max_value=0.5, value=0.1,                                             format="%.2f")
-debt_amt        = st.sidebar.number_input("Debt (Year 0)",        value=hist_assumps.get("debt", 0.0), step=10000, format="%d")
-interest_rate   = st.sidebar.slider("Interest Rate",          min_value=0.0, max_value=0.3, value=hist_assumps["interest_rate"],             format="%.2f")
-discount_rate   = st.sidebar.slider("DCF Discount Rate",      min_value=0.0, max_value=0.3, value=hist_assumps["discount_rate"],            format="%.2f")
-exit_multiple   = st.sidebar.slider("Exit Multiple",          min_value=1,   max_value=15,  value=hist_assumps["exit_multiple"],              step=1)
+
+starting_rev   = st.sidebar.number_input(
+    "Starting Revenue",
+    value=int(hist_assumps["starting_revenue"]),
+    step=10000
+)
+
+revenue_growth = st.sidebar.slider(
+    "Revenue Growth Rate",
+    0.0, 1.0,
+    float(hist_assumps["revenue_growth"])
+)
+
+cost_margin    = st.sidebar.slider(
+    "Cost of Sales Margin",
+    0.0, 1.0,
+    float(hist_assumps["margin"])
+)
+
+depr_rate      = st.sidebar.slider(
+    "Depreciation Rate (%)",
+    0.0, 0.5,
+    0.1
+)
+
+capex_pct      = st.sidebar.slider(
+    "CapEx % of Revenue",
+    0.0, 0.5,
+    0.1
+)
+
+debt_amt       = st.sidebar.number_input(
+    "Debt (Year 0)",
+    value=int(hist_assumps.get("debt", 0)),
+    step=10000
+)
+
+interest_rate  = st.sidebar.slider(
+    "Interest Rate",
+    0.0, 0.3,
+    float(hist_assumps["interest_rate"])
+)
+
+discount_rate  = st.sidebar.slider(
+    "DCF Discount Rate",
+    0.0, 0.3,
+    float(hist_assumps["discount_rate"])
+)
+
+exit_multiple  = st.sidebar.slider(
+    "Exit Multiple",
+    1, 15,
+    int(hist_assumps["exit_multiple"])
+)
 
 # Assemble the final assumptions dict
 assumptions = {
@@ -73,9 +118,9 @@ with tabs[1]:
 
 with tabs[2]:
     st.header("🏗 Fixed Assets & CapEx")
-    st.markdown(f"- **Depreciation Rate:** {depr_rate:.1%} of assets/year")
+    st.markdown(f"- **Depreciation Rate:** {depr_rate:.1%}")
     st.markdown(f"- **CapEx Assumed:** {capex_pct:.1%} of revenue")
-    st.dataframe(pd.DataFrame(model["cash_flow"]) , use_container_width=True)  # or show your fixed assets table
+    # If you have a separate Fixed Assets DF, you can show it here
 
 with tabs[3]:
     st.header("🏦 Balance Sheet")
@@ -91,10 +136,20 @@ with tabs[4]:
 # ─── DOWNLOAD REPORTS ───────────────────────────────────────────────
 st.markdown("---")
 st.subheader("📥 Download Reports")
-excel_bytes = create_excel_report(income_df.reset_index(), cashflow_df["Cash Flow"].tolist(),
-                                  ev, pd.DataFrame([("Base",ev)],columns=["Scenario","EV"]),
-                                  pd.DataFrame(), model)
-ppt_bytes   = create_powerpoint_report(income_df.reset_index(), ev, pd.DataFrame([("Base",ev)],columns=["Scenario","EV"]))
+
+excel_bytes = create_excel_report(
+    income_df.reset_index(),
+    cashflow_df["Cash Flow"].tolist(),
+    ev,
+    pd.DataFrame([("Base",ev)],columns=["Scenario","EV"]),
+    pd.DataFrame(),  # sensitivity placeholder
+    model
+)
+ppt_bytes = create_powerpoint_report(
+    income_df.reset_index(),
+    ev,
+    pd.DataFrame([("Base",ev)],columns=["Scenario","EV"])
+)
 
 col1, col2 = st.columns(2)
 with col1:
