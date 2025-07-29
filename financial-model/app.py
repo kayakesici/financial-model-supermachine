@@ -14,87 +14,92 @@ from engine.valuation import dcf_valuation
 from engine.reporting import create_excel_report, create_powerpoint_report
 
 # ─── CONFIG ──────────────────────────────────────────────────────────
-st.set_page_config(page_title="M&A Super Machine", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="M&A Super Machine", layout="wide")
 DEFAULT_FILE = "Kayas NEW Model.xlsx"
 
-@st.cache_resource  # <— changed from cache_data to cache_resource
-def load_excel(path):
-    return pd.ExcelFile(path, engine="openpyxl")
+# ─── LOAD HISTORICAL ASSUMPTIONS ────────────────────────────────────
+hist_assumps = get_inputs_from_excel(DEFAULT_FILE)
 
-# Attempt to load
-try:
-    xls = load_excel(DEFAULT_FILE)
-except FileNotFoundError:
-    st.error(f"🚨 Default file not found: {DEFAULT_FILE}")
-    st.stop()
+# ─── USER INPUTS PANEL ──────────────────────────────────────────────
+st.sidebar.header("🔧 Model Inputs (override)")
+starting_rev    = st.sidebar.number_input("Starting Revenue",     value=hist_assumps["starting_revenue"], step=10000, format="%d")
+revenue_growth  = st.sidebar.slider("Revenue Growth Rate",    min_value=0.0, max_value=1.0, value=hist_assumps["revenue_growth"], format="%.2f")
+cost_margin     = st.sidebar.slider("Cost of Sales Margin",   min_value=0.0, max_value=1.0, value=hist_assumps["margin"],           format="%.2f")
+depr_rate       = st.sidebar.slider("Depreciation Rate (%)",  min_value=0.0, max_value=0.5, value=0.1,                                             format="%.2f")
+capex_pct       = st.sidebar.slider("CapEx % of Revenue",     min_value=0.0, max_value=0.5, value=0.1,                                             format="%.2f")
+debt_amt        = st.sidebar.number_input("Debt (Year 0)",        value=hist_assumps.get("debt", 0.0), step=10000, format="%d")
+interest_rate   = st.sidebar.slider("Interest Rate",          min_value=0.0, max_value=0.3, value=hist_assumps["interest_rate"],             format="%.2f")
+discount_rate   = st.sidebar.slider("DCF Discount Rate",      min_value=0.0, max_value=0.3, value=hist_assumps["discount_rate"],            format="%.2f")
+exit_multiple   = st.sidebar.slider("Exit Multiple",          min_value=1,   max_value=15,  value=hist_assumps["exit_multiple"],              step=1)
 
-# ─── EXTRACT & MODEL ─────────────────────────────────────────────────
-assumptions = get_inputs_from_excel(DEFAULT_FILE)
-try:
-    model = create_3_statements(assumptions, years=5)
-    cash_flows = model["cash_flow"]["Cash Flow"]
-    base_ev = dcf_valuation(cash_flows, assumptions["discount_rate"], assumptions["exit_multiple"])
-except Exception as e:
-    st.error(f"Error building model: {e}")
-    st.stop()
+# Assemble the final assumptions dict
+assumptions = {
+    "starting_revenue": starting_rev,
+    "revenue_growth":   revenue_growth,
+    "margin":           cost_margin,
+    "depreciation_rate": depr_rate,
+    "capex_pct":        capex_pct,
+    "debt":             debt_amt,
+    "interest_rate":    interest_rate,
+    "discount_rate":    discount_rate,
+    "exit_multiple":    exit_multiple
+}
 
-income_df     = pd.DataFrame(model["income_statement"])
-cashflow_df   = pd.DataFrame(model["cash_flow"])
-bs_df         = pd.DataFrame(model["balance_sheet"])
-fixed_assets_df = pd.read_excel(DEFAULT_FILE, sheet_name="Fixed Assets", engine="openpyxl", header=None)
-first_view_df   = pd.read_excel(DEFAULT_FILE, sheet_name="First View",   engine="openpyxl", header=None)
+# ─── RUN MODEL ──────────────────────────────────────────────────────
+model = create_3_statements(assumptions, years=5)
+income_df   = pd.DataFrame(model["income_statement"]).set_index("Year")
+cashflow_df = pd.DataFrame(model["cash_flow"]).set_index("Year")
+bs_df       = pd.DataFrame(model["balance_sheet"]).set_index("Year")
 
-# ─── NAVBAR / TABS ───────────────────────────────────────────────────
-tabs = st.tabs(["📈 Summary", "📄 P&L", "🏗️ Fixed Assets", "🏦 Balance Sheet", "💵 Cash Flow"])
+# Calculate DCF EV
+ev = dcf_valuation(cashflow_df["Cash Flow"].tolist(), discount_rate, exit_multiple)
 
-# ─── TAB 1: SUMMARY ───────────────────────────────────────────────────
+# ─── NAVBAR (TABS) ─────────────────────────────────────────────────
+tabs = st.tabs(["📈 Summary", "📄 P&L", "🏗 Fixed Assets", "🏦 Balance Sheet", "💵 Cash Flow"])
+
 with tabs[0]:
     st.header("📊 Executive Summary")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Starting Revenue", f"${assumptions['starting_revenue']:,.0f}")
-    c2.metric("EV (DCF)",          f"${base_ev:,.0f}")
-    c3.metric("Revenue Growth",    f"{assumptions['revenue_growth']:.1%}")
-    c4.metric("Cost Margin",       f"{assumptions['margin']:.1%}")
-    # … rest of summary …
+    c1.metric("Starting Revenue", f"${starting_rev:,.0f}")
+    c2.metric("EV (DCF)", f"${ev:,.0f}")
+    c3.metric("Revenue Growth", f"{revenue_growth:.1%}")
+    c4.metric("Cost Margin", f"{cost_margin:.1%}")
+    st.line_chart(income_df[["Revenue","Profit"]], height=300)
+    st.bar_chart(cashflow_df["Cash Flow"], height=300)
 
-# ─── TAB 2: P&L ───────────────────────────────────────────────────────
 with tabs[1]:
-    st.header("📄 Profit & Loss (First View)")
-    st.dataframe(first_view_df, use_container_width=True)
-    st.subheader("Modeled Income Statement")
-    st.dataframe(income_df.set_index("Year"), use_container_width=True)
+    st.header("📄 Profit & Loss (Modeled)")
+    st.dataframe(income_df, use_container_width=True)
 
-# ─── TAB 3: FIXED ASSETS ──────────────────────────────────────────────
 with tabs[2]:
-    st.header("🏗️ Fixed Assets & CapEx")
-    st.dataframe(fixed_assets_df, use_container_width=True)
-    # … rest …
+    st.header("🏗 Fixed Assets & CapEx")
+    st.markdown(f"- **Depreciation Rate:** {depr_rate:.1%} of assets/year")
+    st.markdown(f"- **CapEx Assumed:** {capex_pct:.1%} of revenue")
+    st.dataframe(pd.DataFrame(model["cash_flow"]) , use_container_width=True)  # or show your fixed assets table
 
-# ─── TAB 4: BALANCE SHEET ────────────────────────────────────────────
 with tabs[3]:
     st.header("🏦 Balance Sheet")
-    st.dataframe(bs_df.set_index("Year"), use_container_width=True)
-    # … rest …
+    st.dataframe(bs_df, use_container_width=True)
+    st.area_chart(bs_df[["Assets","Debt","Equity"]], height=300)
 
-# ─── TAB 5: CASH FLOW ────────────────────────────────────────────────
 with tabs[4]:
     st.header("💵 Cash Flow Forecast")
-    st.dataframe(cashflow_df.set_index("Year"), use_container_width=True)
-    # … rest …
+    st.dataframe(cashflow_df, use_container_width=True)
+    st.metric("Enterprise Value (DCF)", f"${ev:,.0f}")
+    st.line_chart(cashflow_df["Cash Flow"], height=300)
 
-# ─── DOWNLOADS ────────────────────────────────────────────────────────
+# ─── DOWNLOAD REPORTS ───────────────────────────────────────────────
 st.markdown("---")
-st.header("📥 Download Reports")
-excel_data = create_excel_report(income_df, cash_flows, base_ev,
-                                 pd.DataFrame([("Base", base_ev)], columns=["Scenario","EV"]),
-                                 pd.DataFrame(), model)
-ppt_data   = create_powerpoint_report(income_df, base_ev,
-                                      pd.DataFrame([("Base", base_ev)], columns=["Scenario","EV"]))
+st.subheader("📥 Download Reports")
+excel_bytes = create_excel_report(income_df.reset_index(), cashflow_df["Cash Flow"].tolist(),
+                                  ev, pd.DataFrame([("Base",ev)],columns=["Scenario","EV"]),
+                                  pd.DataFrame(), model)
+ppt_bytes   = create_powerpoint_report(income_df.reset_index(), ev, pd.DataFrame([("Base",ev)],columns=["Scenario","EV"]))
 
 col1, col2 = st.columns(2)
 with col1:
-    st.download_button("Download Excel", excel_data, "M&A_Model.xlsx",
+    st.download_button("Download Excel", excel_bytes, "M&A_Model.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 with col2:
-    st.download_button("Download PPT",   ppt_data,   "M&A_Model.pptx",
+    st.download_button("Download PPT",   ppt_bytes,   "M&A_Model.pptx",
                        "application/vnd.openxmlformats-officedocument.presentationml.presentation")
