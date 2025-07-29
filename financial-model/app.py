@@ -9,85 +9,81 @@ from engine.reporting import create_excel_report, create_powerpoint_report
 st.set_page_config(page_title="M&A Financial Model", layout="wide")
 st.title("💼 M&A Financial Model Super Machine")
 
-DEFAULT_FILE = "Kayas NEW Model.xlsx"  # Default file in project folder
+# If you drop your Excel here it overrides this default
+DEFAULT_FILE = "Kayas NEW Model.xlsx"
+uploaded = st.file_uploader("Upload Excel file", type=["xlsx"])
 
-uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
-
-# Choose file: uploaded or default
-if uploaded_file:
-    file_to_use = uploaded_file
+# Choose which file to use
+if uploaded:
+    file_to_use = uploaded
 else:
-    try:
-        file_to_use = DEFAULT_FILE
-        st.info(f"📄 Using default model: {DEFAULT_FILE}")
-    except:
-        st.error("❌ Default file not found. Please upload an Excel file.")
-        st.stop()
+    file_to_use = DEFAULT_FILE
+    st.info(f"📄 Using default model: {DEFAULT_FILE}")
 
-def run_model(assumptions):
-    model = create_3_statements(assumptions, years=5)
-    cash_flows = model["cash_flow"]["Cash Flow"]
-    ev = dcf_valuation(cash_flows, assumptions["discount_rate"], assumptions["exit_multiple"])
-    return model, ev
-
+# MAIN
 try:
-    # Extract assumptions
+    # 1) extract everything
     assumptions = get_inputs_from_excel(file_to_use)
-    st.subheader("📄 Extracted Assumptions (Auto)")
+    st.subheader("📄 Auto‑Extracted Assumptions")
     st.json(assumptions)
 
-    # Base model
-    base_model, base_ev = run_model(assumptions)
-    income_df = pd.DataFrame(base_model["income_statement"])
-    cash_flows = base_model["cash_flow"]["Cash Flow"]
+    # 2) run 3‑statement + DCF
+    def run(assumps):
+        m, ev = create_3_statements(assumps, years=5), None
+        cf = m["cash_flow"]["Cash Flow"]
+        ev = dcf_valuation(cf, assumps["discount_rate"], assumps["exit_multiple"])
+        return m, ev
 
-    st.subheader("📊 Base Case Income Statement")
-    st.dataframe(income_df)
-    st.metric("Enterprise Value (Base)", f"${base_ev:,.0f}")
+    model, ev = run(assumptions)
 
-    # Scenario Analysis
+    # 3) display Income Statement & EV
+    inc = pd.DataFrame(model["income_statement"])
+    st.subheader("📊 Income Statement")
+    st.dataframe(inc)
+    st.metric("Enterprise Value", f"${ev:,.0f}")
+
+    # 4) Scenarios
     st.subheader("📈 Scenario Analysis")
     scenarios = {
-        "Base": assumptions.copy(),
+        "Base": assumptions,
         "Upside": {**assumptions, "revenue_growth": assumptions["revenue_growth"] + 0.05, "margin": assumptions["margin"] + 0.05},
         "Downside": {**assumptions, "revenue_growth": max(0, assumptions["revenue_growth"] - 0.05), "margin": max(0, assumptions["margin"] - 0.05)},
     }
+    results = {k: run(v)[1] for k, v in scenarios.items()}
+    df_scen = pd.DataFrame(results.items(), columns=["Scenario", "EV"])
+    st.dataframe(df_scen.style.format({"EV":"${:,.0f}"}))
 
-    results = {}
-    for name, scenario_inputs in scenarios.items():
-        _, ev = run_model(scenario_inputs)
-        results[name] = ev
-
-    scenario_df = pd.DataFrame(results.items(), columns=["Scenario", "Enterprise Value ($)"])
-    st.dataframe(scenario_df)
-
-    # Sensitivity Table
-    st.subheader("📊 Valuation Sensitivity (EV)")
-    discount_rates = np.arange(0.05, 0.21, 0.02)
-    exit_multiples = range(3, 9)
-
-    table = []
-    for dr in discount_rates:
-        row = []
-        for em in exit_multiples:
-            _, ev = run_model({**assumptions, "discount_rate": dr, "exit_multiple": em})
-            row.append(ev)
-        table.append(row)
-
-    df_sens = pd.DataFrame(table, index=[f"{dr:.0%}" for dr in discount_rates], columns=[f"x{em}" for em in exit_multiples])
+    # 5) Sensitivity
+    st.subheader("📊 Sensitivity Table")
+    drs = np.arange(0.05, 0.21, 0.02)
+    ems = range(3,9)
+    sens = []
+    for dr in drs:
+        row = [run({**assumptions, "discount_rate":dr,"exit_multiple":em})[1] for em in ems]
+        sens.append(row)
+    df_sens = pd.DataFrame(sens, index=[f"{dr:.0%}" for dr in drs], columns=[f"x{em}" for em in ems])
     st.dataframe(df_sens.style.format("${:,.0f}"))
 
-    # Reports
-    excel_report = create_excel_report(income_df, cash_flows, base_ev, scenario_df, df_sens, base_model)
-    ppt_report = create_powerpoint_report(income_df, base_ev, scenario_df)
+    # 6) Full‑report downloads
+    st.subheader("📥 Download Reports")
+    excel_bytes = create_excel_report(
+        pd.DataFrame(model["income_statement"]),
+        model["cash_flow"]["Cash Flow"],
+        ev,
+        df_scen,
+        df_sens,
+        model
+    )
+    ppt_bytes = create_powerpoint_report(
+        pd.DataFrame(model["income_statement"]),
+        ev,
+        df_scen
+    )
 
-    st.download_button("📊 Download Full Excel Report", data=excel_report,
-                       file_name="Full_Financial_Model.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    st.download_button("📈 Download PowerPoint Report", data=ppt_report,
-                       file_name="Financial_Model_Report.pptx",
-                       mime="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+    st.download_button("Download Excel", excel_bytes, "Full_Report.xlsx", 
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button("Download PowerPoint", ppt_bytes, "Full_Report.pptx",
+                       "application/vnd.openxmlformats-officedocument.presentationml.presentation")
 
 except Exception as e:
-    st.error(f"Error: {e}")
+    st.error(f"⚠️ Something went wrong: {e}")
